@@ -1,12 +1,12 @@
 """
 Unified LLM client for OpenClaw agent.
 Supports: local smart-router, OpenRouter API, Google Gemini API.
-Uses urllib.request (stdlib) — no external dependencies.
+Uses urllib.request (stdlib) вЂ” no external dependencies.
 
 Features:
   - Smart-router as primary (routes to Gemini/Groq/Cerebras/GitHub/OpenRouter)
   - Automatic retry with exponential backoff on 429/503
-  - Fallback chain: smart-router → Gemini direct → OpenRouter direct
+  - Fallback chain: smart-router в†’ Gemini direct в†’ OpenRouter direct
   - Hash-based local embeddings (no API needed)
   - Request deduplication for identical prompts within TTL
 """
@@ -66,7 +66,7 @@ class ModelConfig:
 # --- Default model configurations ---
 # Priority: smart-router (local, free, fast) > Gemini (free tier) > OpenRouter (paid)
 MODELS = {
-    # Smart-router on the server — routes to best available model
+    # Smart-router on the server вЂ” routes to best available model
     'fast': ModelConfig(
         provider='smart-router',
         model_id='auto',
@@ -99,7 +99,7 @@ MODELS = {
         cost_per_1k_input=0.0,
         cost_per_1k_output=0.0,
     ),
-    # Default — smart-router auto
+    # Default вЂ” smart-router auto
     'default': ModelConfig(
         provider='smart-router',
         model_id='auto',
@@ -132,7 +132,7 @@ MODELS = {
         cost_per_1k_input=0.003,
         cost_per_1k_output=0.012,
     ),
-    # Embedding — local hash-based (no API needed)
+    # Embedding вЂ” local hash-based (no API needed)
     'embed': ModelConfig(
         provider='embed-local',
         model_id='local-hash',
@@ -249,7 +249,7 @@ class LLMClient:
                         cfg, messages, temperature,
                         min(max_tokens, cfg.max_output), response_format
                     )
-                    # Success — reset failure count, cache result
+                    # Success вЂ” reset failure count, cache result
                     self._failure_counts[key] = 0
                     self._total_calls += 1
                     self._total_cost += resp.cost_usd
@@ -408,7 +408,7 @@ class LLMClient:
         if not text_lower:
             return vector
 
-        # Character n-grams (2, 3, 4) — captures local patterns
+        # Character n-grams (2, 3, 4) вЂ” captures local patterns
         for n in [2, 3, 4]:
             weight = 1.0 / n  # Shorter n-grams get slightly more weight
             for i in range(len(text_lower) - n + 1):
@@ -417,7 +417,7 @@ class LLMClient:
                 idx = h % dims
                 vector[idx] += weight
 
-        # Word-level hashing — captures semantics
+        # Word-level hashing вЂ” captures semantics
         words = text_lower.split()
         for word in words:
             # Remove common punctuation
@@ -428,7 +428,7 @@ class LLMClient:
             idx = h % dims
             vector[idx] += 2.0  # Words get higher weight
 
-        # Word pair hashing — captures word relationships
+        # Word pair hashing вЂ” captures word relationships
         for i in range(len(words) - 1):
             w1 = words[i].strip('.,!?;:()[]{}"\'-')
             w2 = words[i+1].strip('.,!?;:()[]{}"\'-')

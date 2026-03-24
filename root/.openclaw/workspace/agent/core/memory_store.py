@@ -1,7 +1,7 @@
 """
 SQLite-backed memory storage with embedding support.
 Replaces flat markdown files with proper database storage.
-Zero external dependencies — uses Python stdlib sqlite3.
+Zero external dependencies вЂ” uses Python stdlib sqlite3.
 """
 
 import json

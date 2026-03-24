@@ -97,7 +97,7 @@ class Executor:
             dict with keys: goal_achieved, plan_valid, action (continue/retry/replan).
         """
         if not self.model_router:
-            # No LLM available — use simple heuristic
+            # No LLM available вЂ” use simple heuristic
             return {
                 'goal_achieved': 'yes' if result['success'] else 'no',
                 'plan_valid': 'yes',
