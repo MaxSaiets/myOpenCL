@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitter Sentiment Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        .container {
+            max-width: 900px;
+            margin: auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1, h2 {
+            color: #007bff;
+            text-align: center;
+        }
+        form {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            padding: 10px;
+            width: 70%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #results {
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+        .sentiment-summary {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .sentiment-item {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 5px;
+            text-align: center;
+            flex: 1;
+            min-width: 150px;
+        }
+        .sentiment-item.positive { border-color: #28a745; background-color: #e6ffed; }
+        .sentiment-item.negative { border-color: #dc3545; background-color: #ffe6e8; }
+        .sentiment-item.neutral { border-color: #ffc107; background-color: #fff8e6; }
+        .sentiment-item h3 { margin: 0; font-size: 1.2em; }
+        .sentiment-item p { margin: 5px 0 0; font-size: 1.5em; font-weight: bold; }
+
+        #sentimentChartContainer {
+            width: 100%;
+            max-width: 400px;
+            margin: 20px auto;
+        }
+        #tweetsList {
+            margin-top: 20px;
+        }
+        .tweet-card {
+            background: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: flex-start;
+        }
+        .tweet-card.positive { border-left: 5px solid #28a745; }
+        .tweet-card.negative { border-left: 5px solid #dc3545; }
+        .tweet-card.neutral { border-left: 5px solid #ffc107; }
+
+        .tweet-content {
+            flex-grow: 1;
+        }
+        .tweet-meta {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+        }
+        .sentiment-badge {
+            margin-left: 15px;
+            padding: 5px 10px;
+            border-radius: 15px;
+            color: white;
+            font-size: 0.7em;
+            text-transform: capitalize;
+            white-space: nowrap;
+        }
+        .sentiment-badge.positive { background-color: #28a745; }
+        .sentiment-badge.negative { background-color: #dc3545; }
+        .sentiment-badge.neutral { background-color: #ffc107; }
+        #loading {
+            text-align: center;
+            font-size: 1.2em;
+            margin-top: 20px;
+            display: none;
+        }
+        .error {
+            color: red;
+            text-align: center;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Twitter Sentiment Analyzer</h1>
+
+        <form id="sentimentForm">
+            <input type="text" id="keywords" placeholder="Enter keywords or hashtags (e.g., #AI, Tesla)" required>
+            <button type="submit">Analyze Sentiment</button>
+        </form>
+
+        <div id="loading">Loading... Please wait.</div>
+        <div id="error" class="error"></div>
+
+        <div id="results" style="display: none;">
+            <h2>Sentiment Analysis Results for "<span id="displayKeywords"></span>"</h2>
+            <p>Total Tweets Processed: <span id="totalTweets"></span></p>
+
+            <div class="sentiment-summary">
+                <div class="sentiment-item positive">
+                    <h3>Positive</h3>
+                    <p id="positiveCount"></p>
+                </div>
+                <div class="sentiment-item negative">
+                    <h3>Negative</h3>
+                    <p id="negativeCount"></p>
+                </div>
+                <div class="sentiment-item neutral">
+                    <h3>Neutral</h3>
+                    <p id="neutralCount"></p>
+                </div>
+            </div>
+
+            <div id="sentimentChartContainer">
+                <canvas id="sentimentChart"></canvas>
+            </div>
+
+            <h2>Latest Tweets</h2>
+            <div id="tweetsList">
+                <!-- Tweets will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('sentimentForm');
+        const keywordsInput = document.getElementById('keywords');
+        const resultsDiv = document.getElementById('results');
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+
+        const displayKeywordsSpan = document.getElementById('displayKeywords');
+        const totalTweetsSpan = document.getElementById('totalTweets');
+        const positiveCountSpan = document.getElementById('positiveCount');
+        const negativeCountSpan = document.getElementById('negativeCount');
+        const neutralCountSpan = document.getElementById('neutralCount');
+        const tweetsListDiv = document.getElementById('tweetsList');
+
+        let sentimentChart = null;
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const keywords = keywordsInput.value;
+            displayKeywordsSpan.textContent = keywords;
+            resultsDiv.style.display = 'none';
+            loadingDiv.style.display = 'block';
+            errorDiv.textContent = '';
+            tweetsListDiv.innerHTML = ''; // Clear previous tweets
+
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ keywords }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayResults(data);
+
+            } catch (error) {
+                console.error('Error fetching sentiment data:', error);
+                errorDiv.textContent = `Error: ${error.message}. Please check your API keys or try different keywords.`;
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        });
+
+        function displayResults(data) {
+            totalTweetsSpan.textContent = data.total;
+            positiveCountSpan.textContent = data.positive;
+            negativeCountSpan.textContent = data.negative;
+            neutralCountSpan.textContent = data.neutral;
+
+            // Update or create chart
+            if (sentimentChart) {
+                sentimentChart.destroy();
+            }
+
+            const ctx = document.getElementById('sentimentChart').getContext('2d');
+            sentimentChart = new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: ['Positive', 'Negative', 'Neutral'],
+                    datasets: [{
+                        data: [data.positive, data.negative, data.neutral],
+                        backgroundColor: ['#28a745', '#dc3545', '#ffc107'],
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        title: {
+                            display: true,
+                            text: 'Sentiment Distribution'
+                        }
+                    }
+                }
+            });
+
+            // Display tweets
+            data.tweets.forEach(tweet => {
+                const tweetCard = document.createElement('div');
+                tweetCard.className = `tweet-card ${tweet.sentiment}`;
+                tweetCard.innerHTML = `
+                    <div class="tweet-content">
+                        <p>${tweet.text}</p>
+                        <div class="tweet-meta">
+                            <span>@${tweet.user}</span> - <span>${new Date(tweet.created_at).toLocaleDateString()}</span>
+                        </div>
+                    </div>
+                    <span class="sentiment-badge ${tweet.sentiment}">${tweet.sentiment}</span>
+                `;
+                tweetsListDiv.appendChild(tweetCard);
+            });
+
+            resultsDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

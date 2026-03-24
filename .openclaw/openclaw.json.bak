@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.3.14",
+    "lastTouchedAt": "2026-03-22T11:45:23.202Z"
+  },
+  "agents": {
+    "defaults": {
+      "model": "openai/gpt-4o",
+      "workspace": "/root/.openclaw/workspace"
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "open",
+      "botToken": "8697044933:AAEjLpqcCKIotwoLa69zdRYfaFyh44KY4tE",
+      "streaming": "partial",
+      "allowFrom": [
+        "*"
+      ]
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "ba7c331aa2a41608fe7e09758de43ca0d64e817b494f2634"
+    }
+  }
+}

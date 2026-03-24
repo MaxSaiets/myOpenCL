@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "e09fa323-b223-4745-a9fe-0139cdd5f441",
+      "name": "health-check",
+      "description": "Verify smart-router + pm2 services every 15min",
+      "enabled": false,
+      "createdAtMs": 1774183093192,
+      "updatedAtMs": 1774212133413,
+      "schedule": {
+        "kind": "cron",
+        "expr": "*/15 * * * *"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "System health check: 1) Test http://127.0.0.1:9000/health - if no response, restart smart-router. 2) Run pm2 status. If everything ok reply HEARTBEAT_OK, else describe the issue briefly.",
+        "lightContext": true
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "telegram",
+        "chatId": "1311004971"
+      },
+      "state": {
+        "lastRunAtMs": 1774203300014,
+        "lastRunStatus": "error",
+        "lastStatus": "error",
+        "lastDurationMs": 12968,
+        "lastDeliveryStatus": "unknown",
+        "consecutiveErrors": 0,
+        "lastError": null
+      }
+    },
+    {
+      "id": "ad6e3f2d-76b0-4e7e-88b1-97446665ab6e",
+      "name": "daily-review",
+      "description": "Daily memory review and task planning at 8am UTC",
+      "enabled": false,
+      "createdAtMs": 1774183102415,
+      "updatedAtMs": 1774212133413,
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 8 * * *"
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Good morning\\! Daily review: 1) Read HEARTBEAT.md and TASKS.md 2) Summarize any pending tasks 3) Check if anything needs attention today. Keep response brief."
+      },
+      "delivery": {
+        "mode": "announce",
+        "channel": "telegram",
+        "chatId": "1311004971"
+      },
+      "state": {
+        "consecutiveErrors": 0,
+        "lastError": null,
+        "lastRunStatus": null
+      }
+    },
+    {
+      "id": "cbb8211c-9d4d-48f9-b752-f1f78208f743",
+      "name": "github-backup",
+      "description": "Backup workspace to GitHub every 6 hours",
+      "enabled": true,
+      "createdAtMs": 1774185828124,
+      "updatedAtMs": 1774337030546,
+      "schedule": {
+        "kind": "every",
+        "everyMs": 21600000,
+        "anchorMs": 1774185828124
+      },
+      "sessionTarget": "isolated",
+      "wakeMode": "now",
+      "payload": {
+        "kind": "agentTurn",
+        "message": "Run: cd /root/.openclaw/workspace && git add -A && git commit -m backup && git push 2>/dev/null; echo HEARTBEAT_OK",
+        "lightContext": true
+      },
+      "delivery": {
+        "mode": "silent",
+        "channel": "telegram",
+        "chatId": "1311004971"
+      },
+      "state": {
+        "nextRunAtMs": 1774358628197,
+        "consecutiveErrors": 1,
+        "lastRunStatus": "error",
+        "lastRunAtMs": 1774337028197,
+        "lastStatus": "error",
+        "lastDurationMs": 2349,
+        "lastDeliveryStatus": "unknown",
+        "runningAtMs": 1774358628198
+      }
+    }
+  ]
+}

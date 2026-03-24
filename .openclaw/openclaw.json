@@ -1,0 +1,79 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.3.14",
+    "lastTouchedAt": "2026-03-22T12:41:40.789Z"
+  },
+  "agents": {
+    "defaults": {
+      "model": "router/gpt-4o",
+      "workspace": "/root/.openclaw/workspace"
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "open",
+      "botToken": "8697044933:AAEjLpqcCKIotwoLa69zdRYfaFyh44KY4tE",
+      "allowFrom": [
+        "*"
+      ],
+      "groupPolicy": "allowlist",
+      "streaming": "partial"
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "ba7c331aa2a41608fe7e09758de43ca0d64e817b494f2634"
+    }
+  },
+  "tools": {
+    "exec": {
+      "host": "gateway",
+      "security": "full"
+    }
+  },
+  "models": {
+    "providers": {
+      "router": {
+        "baseUrl": "http://127.0.0.1:9000/v1",
+        "apiKey": "local",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "gpt-4o",
+            "name": "Gemini 2.5 Flash via Smart Router",
+            "reasoning": false,
+            "input": [
+              "text",
+              "image"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    }
+  },
+  "messages": {
+    "queue": {
+      "mode": "interrupt"
+    }
+  }
+}

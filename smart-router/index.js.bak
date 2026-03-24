@@ -1,0 +1,916 @@
+import express from 'express';
+import fetch from 'node-fetch';
+
+const app = express();
+const statsApp = express(); // Public stats server on port 9001
+app.use(express.json({ limit: '50mb' }));
+
+// ── API KEYS ─────────────────────────────────────────────────────────────────
+const KEYS = {
+  github:     process.env.GITHUB_TOKEN   || 'YOUR_GITHUB_TOKEN_HERE',
+  gemini:     process.env.GEMINI_KEY     || 'AIzaSyBOQugdzwro6G-waQ0U9rK3SQGE-sT5AZQ',
+  openrouter: process.env.OPENROUTER_KEY || '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',
+  groq:       process.env.GROQ_API_KEY   || 'YOUR_GROQ_API_KEY_HERE',
+  cerebras:   process.env.CEREBRAS_KEY   || 'csk-v889jd9xxyek98mrx4fpnknnc9pk462589eywtev32wf8dkm',
+  mistral:    process.env.MISTRAL_KEY    || '',
+  together:   process.env.TOGETHER_KEY   || '',
+  sambanova:  process.env.SAMBANOVA_KEY  || '',
+};
+
+const TG_BOT   = '8697044933:AAEjLpqcCKIotwoLa69zdRYfaFyh44KY4tE';
+const TG_CHAT  = '1311004971';
+const SERVER_IP = process.env.SERVER_IP || '68.183.66.2';
+
+// ── BACKENDS ─────────────────────────────────────────────────────────────────
+const BACKENDS = {
+  github: {
+    url: 'https://models.inference.ai.azure.com/chat/completions',
+    headers: () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEYS.github }),
+    active: () => !!KEYS.github,
+  },
+  gemini: {
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    headers: () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEYS.gemini }),
+    active: () => !!KEYS.gemini,
+    allowedParams: new Set(['model','messages','max_tokens','temperature','top_p','stream','stop','tools','tool_choice','response_format']),
+  },
+  groq: {
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    headers: () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEYS.groq }),
+    active: () => !!KEYS.groq,
+  },
+  cerebras: {
+    url: 'https://api.cerebras.ai/v1/chat/completions',
+    headers: () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEYS.cerebras }),
+    active: () => !!KEYS.cerebras,
+    allowedParams: new Set(['model','messages','max_tokens','temperature','top_p','stream','stop','tools','tool_choice']),
+  },
+  mistral: {
+    url: 'https://api.mistral.ai/v1/chat/completions',
+    headers: () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEYS.mistral }),
+    active: () => !!KEYS.mistral,
+  },
+  together: {
+    url: 'https://api.together.xyz/v1/chat/completions',
+    headers: () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEYS.together }),
+    active: () => !!KEYS.together,
+  },
+  sambanova: {
+    url: 'https://api.sambanova.ai/v1/chat/completions',
+    headers: () => ({ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + KEYS.sambanova }),
+    active: () => !!KEYS.sambanova,
+  },
+  openrouter: {
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    headers: () => ({
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + KEYS.openrouter,
+      'HTTP-Referer': 'https://openclaw.ai',
+      'X-Title': 'OpenClaw Smart Router',
+    }),
+    active: () => !!KEYS.openrouter,
+  },
+};
+
+// ── KNOWN FREE-TIER LIMITS ───────────────────────────────────────────────────
+const LIMITS = {
+  'github/gpt-4.1':                               { reqDay: 150,   tokDay: null    },
+  'github/gpt-4.1-mini':                          { reqDay: 500,   tokDay: null    },
+  'github/DeepSeek-R1':                           { reqDay: 150,   tokDay: null    },
+  'github/Llama-3.3-70B-Instruct':                { reqDay: 150,   tokDay: null    },
+  'gemini/gemini-2.5-flash':                      { reqDay: 500,   tokDay: 1000000 },
+  'gemini/gemini-2.0-flash':                      { reqDay: 1500,  tokDay: 1000000 },
+  'groq/moonshotai/kimi-k2-instruct':             { reqDay: 1000,  tokDay: null    },
+  'groq/llama-3.3-70b-versatile':                 { reqDay: 14400, tokDay: null    },
+  'groq/qwen/qwen3-32b':                          { reqDay: 1000,  tokDay: null    },
+  'cerebras/qwen-3-235b-a22b-instruct-2507':      { reqDay: 1000,  tokDay: null    },
+  'cerebras/llama3.1-8b':                         { reqDay: 1000,  tokDay: null    },
+  'openrouter/qwen/qwen3-coder:free':             { reqDay: 50,    tokDay: null    },
+  'openrouter/meta-llama/llama-3.3-70b-instruct:free': { reqDay: 50, tokDay: null },
+};
+
+// ── CONTEXT LIMITS PER MODEL ─────────────────────────────────────────────────
+const MODEL_LIMITS = {
+  'github/gpt-4.1':                               { ctx: 6000,   out: 4096  }, // free tier ~8k total
+  'github/gpt-4.1-nano':                          { ctx: 6000,   out: 4096  },
+  'github/DeepSeek-V3-0324':                      { ctx: 6000,   out: 4096  },
+  'github/Meta-Llama-3.1-405B-Instruct':          { ctx: 6000,   out: 4096  },
+  'github/Phi-4':                                 { ctx: 6000,   out: 4096  },
+  'github/gpt-4o':                                { ctx: 6000,   out: 4096  },
+  'github/gpt-4o-mini':                           { ctx: 6000,   out: 4096  },
+  'github/gpt-4.1-mini':                          { ctx: 6000,   out: 4096  }, // free tier ~8k total
+  'github/DeepSeek-R1':                           { ctx: 6000,   out: 4096  }, // free tier ~8k total
+  'github/Llama-3.3-70B-Instruct':               { ctx: 6000,   out: 4096  }, // free tier ~8k total
+  'gemini/gemini-2.5-flash':                      { ctx: 100000, out: 8192  }, // large but rate-limited
+  'gemini/gemini-2.0-flash':                      { ctx: 100000, out: 8192  }, // large but rate-limited
+  'groq/moonshotai/kimi-k2-instruct':             { ctx: 6000,   out: 4096  }, // free tier ~8k empirical
+  'groq/llama-3.3-70b-versatile':                 { ctx: 6000,   out: 4096  }, // free tier ~8k empirical
+  'groq/qwen/qwen3-32b':                          { ctx: 6000,   out: 4096  }, // free tier limit
+  'cerebras/qwen-3-235b-a22b-instruct-2507':      { ctx: 6000,   out: 4096  }, // ctx=8192 total
+  'cerebras/llama3.1-8b':                         { ctx: 6000,   out: 4096  }, // ctx=8192 total
+  'openrouter/qwen/qwen3-coder:free':             { ctx: 6000,   out: 4096  },
+  'openrouter/meta-llama/llama-3.3-70b-instruct:free': { ctx: 6000, out: 4096 },
+};
+const DEFAULT_CTX = 32000;
+const DEFAULT_OUT = 8192;
+
+// Backends that do NOT support function calling tools
+const NO_TOOLS_BACKENDS = new Set(['cerebras', 'mistral', 'together', 'sambanova']);
+
+// Compress tool schemas aggressively: strip ALL descriptions, keep names+types only
+// Reduces tools from ~50kb to ~3kb
+function stripParamDescriptions(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  const out = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === 'description') continue; // strip all descriptions
+    if (k === 'properties' && typeof v === 'object') {
+      out.properties = Object.fromEntries(
+        Object.entries(v).map(([pk, pv]) => [pk, stripParamDescriptions(pv)])
+      );
+    } else if (k === 'items') {
+      out.items = stripParamDescriptions(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function compressTools(tools) {
+  if (!tools || !tools.length) return tools;
+  // Standard compression: strip all descriptions
+  const standard = tools.map(t => {
+    const fn = t.function || t;
+    return {
+      type: t.type || 'function',
+      function: {
+        name: fn.name,
+        description: (fn.description || '').slice(0, 60),
+        parameters: stripParamDescriptions(fn.parameters || { type: 'object', properties: {} }),
+      },
+    };
+  });
+  // Emergency compression: if still > 8kb, keep only name + required params (no schemas)
+  if (JSON.stringify(standard).length > 8000) {
+    return tools.map(t => {
+      const fn = t.function || t;
+      const props = (fn.parameters || {}).properties || {};
+      const req   = (fn.parameters || {}).required || [];
+      const minProps = {};
+      for (const k of req) { if (props[k]) minProps[k] = { type: props[k].type || 'string' }; }
+      return {
+        type: t.type || 'function',
+        function: {
+          name: fn.name,
+          parameters: { type: 'object', properties: minProps, required: req },
+        },
+      };
+    });
+  }
+  return standard;
+}
+
+
+
+
+// ── GEMINI SCHEMA SANITIZATION ──────────────────────────────────────────────
+// Universal tool schema sanitizer.
+// OpenAI/GitHub REQUIRE additionalProperties:false on every object schema.
+// Gemini (OpenAI-compat endpoint) supports this since Nov 2025.
+// Both support anyOf. Strip only truly universal junk: $schema/$id/$defs/$ref etc.
+function sanitizeSchema(schema) {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const out = {};
+  for (const [k, v] of Object.entries(schema)) {
+    // Strip unsupported meta-schema fields universally
+    if (['$schema','$id','$defs','$ref','unevaluatedProperties',
+         'if','then','else','examples'].includes(k)) continue;
+    // Normalize additionalProperties: always false (OpenAI requires it, Gemini now supports it)
+    if (k === 'additionalProperties') {
+      out.additionalProperties = false;
+      continue;
+    }
+    // Skip empty required arrays
+    if (k === 'required' && Array.isArray(v) && v.length === 0) continue;
+    // Recurse into properties
+    if (k === 'properties' && typeof v === 'object' && !Array.isArray(v)) {
+      out.properties = Object.fromEntries(
+        Object.entries(v).map(([pk, pv]) => [pk, sanitizeSchema(pv)])
+      );
+    } else if (k === 'items') {
+      out.items = Array.isArray(v) ? v.map(s => sanitizeSchema(s)) : sanitizeSchema(v);
+    } else if ((k === 'anyOf' || k === 'oneOf' || k === 'allOf') && Array.isArray(v)) {
+      const cleaned = v.map(s => sanitizeSchema(s));
+      if (cleaned.length > 0) out[k] = cleaned;
+    } else {
+      out[k] = v;
+    }
+  }
+  // OpenAI requires additionalProperties:false on all object schemas
+  if (out.type === 'object' && !('additionalProperties' in out)) {
+    out.additionalProperties = false;
+  }
+  return out;
+}
+
+function sanitizeToolsForGemini(tools) {
+  if (!tools || !tools.length) return tools;
+  return tools.map(t => {
+    const fn = t.function || t;
+    return {
+      type: t.type || 'function',
+      function: {
+        name: fn.name,
+        description: (fn.description || '').slice(0, 1024),
+        parameters: sanitizeSchema(fn.parameters || { type: 'object', properties: {}, additionalProperties: false }),
+      },
+    };
+  });
+}
+
+function estTokens(obj) {
+  return Math.ceil(JSON.stringify(obj).length / 3.5);
+}
+
+// ── SMART CONTEXT COMPRESSION ────────────────────────────────────────────────
+// Strategy:
+//   1. Keep system prompt
+//   2. Keep first user message (original goal)
+//   3. Keep last 10 messages (recent context / current tool loop)
+//   4. Drop everything in the middle
+//   5. Trim individual messages that are too large (huge tool outputs)
+const MAX_MSG_TOK = 2000;
+
+function trimSingleMsg(msg) {
+  const c = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+  if (c.length / 3.5 <= MAX_MSG_TOK) return msg;
+  return { ...msg, content: c.slice(0, MAX_MSG_TOK * 3) + '\n[...trimmed...]' };
+}
+
+function estTok(msg) {
+  const c = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+  return Math.ceil(c.length / 3.5) + 10;
+}
+
+function smartCompress(messages, tokenBudget) {
+  if (!messages || messages.length === 0) return messages;
+  const budget = Math.max(tokenBudget || 2000, 800);
+
+  const system = messages.filter(m => m.role === 'system');
+  const nonSys = messages.filter(m => m.role !== 'system');
+  if (nonSys.length === 0) return messages;
+
+  // Trim individual oversized messages (tool outputs, etc.)
+  const maxMsgTok = Math.min(MAX_MSG_TOK, Math.floor(budget * 0.4));
+  function trim(msg) {
+    const c = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+    if (c.length / 3.5 <= maxMsgTok) return msg;
+    return { ...msg, content: c.slice(0, maxMsgTok * 3) + '[...trimmed]' };
+  }
+
+  // Build from recent backwards until budget is exhausted
+  const sysTok   = system.reduce((s, m) => s + estTok(m), 0);
+  let remaining  = budget - sysTok - 50; // 50 for compression note
+  const kept     = [];
+
+  for (let i = nonSys.length - 1; i >= 0 && remaining > 0; i--) {
+    const trimmed = trim(nonSys[i]);
+    const t = estTok(trimmed);
+    if (t > remaining && kept.length > 0) break; // stop if no budget, but keep at least 1
+    remaining -= t;
+    kept.unshift(trimmed);
+  }
+
+  // Remove leading orphaned tool results
+  while (kept.length > 0 && kept[0].role === 'tool') kept.shift();
+
+  const dropped = nonSys.length - kept.length;
+  if (dropped === 0) return [...system, ...kept];
+
+  const note = { role: 'system', content: '[Context: ' + dropped + ' older messages omitted]' };
+  const result = [...system, note, ...kept];
+  const usedTok = Math.round(JSON.stringify(result).length / 3.5);
+  console.log('[router] compressed ' + dropped + ' msgs -> ~' + usedTok + ' tok (budget=' + budget + ')');
+  return result;
+}
+
+
+// ── TOKEN TRACKING ───────────────────────────────────────────────────────────
+let dailyDate   = new Date().toDateString();
+let dailyUsage  = {};  // resets each day
+let totalUsage  = {};  // all-time, never resets
+const stats = { requests: 0, byType: {}, byModel: {}, errors: 0, startTime: Date.now() };
+
+function checkDayReset() {
+  const today = new Date().toDateString();
+  if (dailyDate !== today) { dailyDate = today; dailyUsage = {}; }
+}
+
+function trackTokens(backend, model, usage) {
+  checkDayReset();
+  const key = backend + '/' + model;
+  const empty = () => ({ req: 0, prompt: 0, completion: 0, total: 0 });
+  if (!dailyUsage[key]) dailyUsage[key] = empty();
+  if (!totalUsage[key]) totalUsage[key] = empty();
+
+  dailyUsage[key].req++;
+  totalUsage[key].req++;
+
+  if (usage) {
+    const p = usage.prompt_tokens || 0;
+    const c = usage.completion_tokens || 0;
+    const t = usage.total_tokens || (p + c);
+    dailyUsage[key].prompt     += p;
+    dailyUsage[key].completion += c;
+    dailyUsage[key].total      += t;
+    totalUsage[key].prompt     += p;
+    totalUsage[key].completion += c;
+    totalUsage[key].total      += t;
+  }
+}
+
+// ── COOLDOWN ─────────────────────────────────────────────────────────────────
+const cooldowns = {};
+function isOnCooldown(k) { return Date.now() < (cooldowns[k] || 0); }
+function setCooldown(k, sec) {
+  cooldowns[k] = Date.now() + (sec + 2) * 1000;
+  console.log('[router] cooldown: ' + k + ' for ' + sec + 's');
+}
+
+// ── STAGE-AWARE MODEL ROUTING ────────────────────────────────────────────────
+// Stages:
+//   execution   — assistant is running tools in a loop → FAST models
+//   verification— user asks to check/verify results   → SMART models
+//   code/task/analysis/chat — keyword-based for new requests
+function makeChain(...candidates) {
+  return candidates.filter(({ backend }) => BACKENDS[backend] && BACKENDS[backend].active());
+}
+
+const CHAINS = {
+  // Code: DeepSeek-V3 best coder, R1 reasoning, GPT-4.1 reliable
+  code: () => makeChain(
+    { backend: 'github',     model: 'DeepSeek-V3-0324' },
+    { backend: 'github',     model: 'gpt-4.1' },
+    { backend: 'github',     model: 'DeepSeek-R1' },
+    { backend: 'github',     model: 'Meta-Llama-3.1-405B-Instruct' },
+    { backend: 'github',     model: 'Llama-3.3-70B-Instruct' },
+    { backend: 'github',     model: 'gpt-4.1-mini' },
+    { backend: 'gemini',     model: 'gemini-2.5-flash' },
+    { backend: 'groq',       model: 'moonshotai/kimi-k2-instruct' },
+    { backend: 'github',     model: 'gpt-4.1-nano' },
+    { backend: 'openrouter', model: 'qwen/qwen3-coder:free' },
+  ),
+  // Task: GPT-4.1 follows instructions best
+  task: () => makeChain(
+    { backend: 'github',     model: 'gpt-4.1' },
+    { backend: 'github',     model: 'Meta-Llama-3.1-405B-Instruct' },
+    { backend: 'github',     model: 'Llama-3.3-70B-Instruct' },
+    { backend: 'github',     model: 'DeepSeek-V3-0324' },
+    { backend: 'github',     model: 'gpt-4.1-mini' },
+    { backend: 'gemini',     model: 'gemini-2.5-flash' },
+    { backend: 'groq',       model: 'moonshotai/kimi-k2-instruct' },
+    { backend: 'github',     model: 'gpt-4.1-nano' },
+    { backend: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct:free' },
+  ),
+  // Analysis: DeepSeek-R1 deep reasoning, 405B for depth
+  analysis: () => makeChain(
+    { backend: 'github',     model: 'DeepSeek-R1' },
+    { backend: 'github',     model: 'Meta-Llama-3.1-405B-Instruct' },
+    { backend: 'github',     model: 'gpt-4.1' },
+    { backend: 'github',     model: 'DeepSeek-V3-0324' },
+    { backend: 'github',     model: 'Llama-3.3-70B-Instruct' },
+    { backend: 'github',     model: 'gpt-4.1-mini' },
+    { backend: 'gemini',     model: 'gemini-2.5-flash' },
+    { backend: 'groq',       model: 'moonshotai/kimi-k2-instruct' },
+  ),
+  // Chat: speed first — mini/nano are fast GitHub models
+  chat: () => makeChain(
+    { backend: 'github',     model: 'gpt-4.1-mini' },
+    { backend: 'github',     model: 'gpt-4.1-nano' },
+    { backend: 'github',     model: 'Phi-4' },
+    { backend: 'github',     model: 'gpt-4.1' },
+    { backend: 'gemini',     model: 'gemini-2.5-flash' },
+    { backend: 'github',     model: 'Llama-3.3-70B-Instruct' },
+    { backend: 'groq',       model: 'moonshotai/kimi-k2-instruct' },
+    { backend: 'github',     model: 'gpt-4o-mini' },
+    { backend: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct:free' },
+  ),
+  // Execution: GitHub first (reliable tool calling), Gemini as fallback
+  // kimi-k2 + Llama removed — generate invalid tool call parameters (empty args)
+  execution: () => makeChain(
+    { backend: 'github',   model: 'gpt-4.1-mini' },      // Fast, reliable tool calling
+    { backend: 'gemini',   model: 'gemini-2.5-flash' },  // Great when not rate-limited
+    { backend: 'github',   model: 'gpt-4.1' },           // Full quality fallback
+    { backend: 'github',   model: 'gpt-4.1-nano' },      // Ultra-fast fallback
+    { backend: 'github',   model: 'gpt-4o-mini' },       // Additional fallback
+    { backend: 'gemini',   model: 'gemini-2.0-flash' },  // Older Gemini
+    { backend: 'github',   model: 'gpt-4o' },            // Last resort
+  ),
+  // Verification: best quality GitHub models
+  verification: () => makeChain(
+    { backend: 'github',     model: 'gpt-4.1' },
+    { backend: 'github',     model: 'DeepSeek-R1' },
+    { backend: 'github',     model: 'Meta-Llama-3.1-405B-Instruct' },
+    { backend: 'github',     model: 'DeepSeek-V3-0324' },
+    { backend: 'github',     model: 'gpt-4.1-mini' },
+    { backend: 'gemini',     model: 'gemini-2.5-flash' },
+    { backend: 'groq',       model: 'moonshotai/kimi-k2-instruct' },
+  ),
+};
+
+const CODE_KW     = ['код','code','python','javascript','typescript','script','скрипт',
+                     'debug','fix','bug','import','function','async','bash','sql','api',
+                     'git','docker','рефакторинг','traceback','syntax','error:','def ','class '];
+const TASK_KW     = ['зроби','виконай','створи','реалізуй','налаштуй','встанови',
+                     'запусти','збережи','запуш','push','deploy','setup','install','проект','завдання'];
+const ANALYSIS_KW = ['поясни','explain','аналіз','analyze','порівняй','compare',
+                     'дослідж','research','розгорнуто','детально','чому','why','як працює'];
+const VERIFY_KW   = ['перевір','verify','check','підтверди','результат','готово','done'];
+
+function detectStage(messages) {
+  const nonSys = messages.filter(m => m.role !== 'system');
+  if (nonSys.length === 0) return 'chat';
+
+  const recent5 = nonSys.slice(-5);
+  const last    = nonSys[nonSys.length - 1];
+
+  // execution: recent messages have tool_calls or tool results
+  const hasToolCalls   = recent5.some(m => Array.isArray(m.tool_calls) && m.tool_calls.length > 0);
+  const hasToolResults = recent5.some(m => m.role === 'tool');
+  if (hasToolCalls || hasToolResults) {
+    const lastText = (typeof last.content === 'string' ? last.content : '').toLowerCase();
+    if (last.role === 'user' && VERIFY_KW.some(kw => lastText.includes(kw))) return 'verification';
+    return 'execution';
+  }
+
+  // verification: many tool results in history + user asks to verify
+  const toolCount = nonSys.filter(m => m.role === 'tool').length;
+  if (toolCount >= 3 && last.role === 'user') {
+    const lastText = (typeof last.content === 'string' ? last.content : '').toLowerCase();
+    if (VERIFY_KW.some(kw => lastText.includes(kw))) return 'verification';
+  }
+
+  // keyword classification
+  const text = nonSys.filter(m => m.role === 'user')
+    .map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content))
+    .join(' ').toLowerCase();
+  if (CODE_KW.some(kw => text.includes(kw)))     return 'code';
+  if (TASK_KW.some(kw => text.includes(kw)))     return 'task';
+  if (ANALYSIS_KW.some(kw => text.includes(kw))) return 'analysis';
+  return 'chat';
+}
+
+function classifyTask(messages, hasTools) {
+  // If request includes tools, ALWAYS use execution chain (reliable tool calling only)
+  if (hasTools) return { type: "execution", chain: CHAINS.execution() };
+  const type  = detectStage(messages);
+  const chain = (CHAINS[type] || CHAINS.chat)();
+  return { type, chain };
+}
+
+// ── PROXY REQUEST ─────────────────────────────────────────────────────────────
+async function tryBackend(backend, model, body, stream) {
+  const cfg = BACKENDS[backend];
+  if (!cfg || !cfg.active()) throw new Error('INACTIVE:' + backend);
+
+  const ck = backend + '/' + model;
+  if (isOnCooldown(ck)) throw new Error('COOLDOWN:' + ck);
+
+  const modelKey = backend + '/' + model;
+  const mlim = MODEL_LIMITS[modelKey] || { ctx: DEFAULT_CTX, out: DEFAULT_OUT };
+
+  // Strip tools for backends that don't support function calling
+  let tools = NO_TOOLS_BACKENDS.has(backend) ? undefined : compressTools(body.tools || undefined);
+  // Sanitize tool schemas for all backends (strip anyOf, additionalProperties, $schema etc)
+  if (tools) tools = sanitizeToolsForGemini(tools);
+  // schema debug removed
+  const toolChoice = NO_TOOLS_BACKENDS.has(backend) ? undefined : (body.tool_choice || undefined);
+
+  // Budget = ctx limit minus output minus tools overhead minus safety margin
+  const toolsTokens = tools ? estTokens(tools) : 0;
+  const msgBudget   = mlim.ctx - mlim.out - toolsTokens - 500;
+  const trimmedMsgs = smartCompress(body.messages || [], Math.max(msgBudget, 2000));
+
+  let payload = { ...body, model, messages: trimmedMsgs };
+  if (tools !== undefined)      payload.tools       = tools;
+  else                          delete payload.tools;
+  if (toolChoice !== undefined) payload.tool_choice = toolChoice;
+  else                          delete payload.tool_choice;
+
+  if (cfg.allowedParams) {
+    payload = Object.fromEntries(Object.entries(payload).filter(([k]) => cfg.allowedParams.has(k)));
+  }
+  payload.stream = stream || false;
+
+  // Strip params some APIs don't support
+  delete payload.store;
+  delete payload.user;
+  delete payload.service_tier;
+  delete payload.logprobs;
+  delete payload.top_logprobs;
+  delete payload.n;
+
+  // Cap output tokens to model limit
+  if ((payload.max_tokens || 0) > mlim.out)            payload.max_tokens = mlim.out;
+  if ((payload.max_completion_tokens || 0) > mlim.out) payload.max_completion_tokens = mlim.out;
+  if (!payload.max_tokens)                             payload.max_tokens = mlim.out;
+
+  // Log compressed size
+  const cmpSz = Math.round(JSON.stringify(payload).length / 1024);
+  const cmpTool = Math.round(JSON.stringify(payload.tools || []).length / 1024);
+  if (cmpTool > 0) console.log('[router] -> ' + backend + ' payload=' + cmpSz + 'kb tools=' + cmpTool + 'kb');
+  // debug log removed
+
+  // schema debug removed
+  const res = await fetch(cfg.url, {
+    method: 'POST',
+    headers: cfg.headers(),
+    body: JSON.stringify(payload),
+  });
+
+  if (res.status === 429) {
+    const text = await res.text();
+    const match = text.match(/retry[- ]after[": ]+([0-9.]+)/i) || text.match(/retry in ([0-9.]+)s/i);
+    const wait = match ? Math.ceil(parseFloat(match[1])) : 60;
+    setCooldown(ck, wait);
+    const e = new Error('429 cooldown ' + wait + 's'); e.status = 429; throw e;
+  }
+
+  return res;
+}
+
+// ── MAIN HANDLER ──────────────────────────────────────────────────────────────
+app.post('/v1/chat/completions', async (req, res) => {
+  stats.requests++;
+  const { messages = [], stream = false } = req.body;
+  const { type, chain } = classifyTask(messages, (req.body.tools || []).length > 0);
+  stats.byType[type] = (stats.byType[type] || 0) + 1;
+  const _bsz=JSON.stringify(req.body).length; const _tsz=JSON.stringify(req.body.tools||[]).length;
+  console.log('[router] task=' + type + ' body=' + Math.round(_bsz/1024) + 'kb tools=' + Math.round(_tsz/1024) + 'kb | ' + new Date().toISOString().slice(11,19));
+
+  let lastErr = null;
+  for (const { backend, model } of chain) {
+    const label = backend + '/' + model;
+    try {
+      const upstream = await tryBackend(backend, model, req.body, stream);
+      if (upstream.ok) {
+        stats.byModel[label] = (stats.byModel[label] || 0) + 1;
+        console.log('[router] OK -> ' + label);
+        if (stream) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          upstream.body.pipe(res);
+          // Count streaming request (no token data available without parsing stream)
+          trackTokens(backend, model, null);
+        } else {
+          const data = await upstream.json();
+          if (data.choices) data._router = { backend, model, type };
+          res.status(200).json(data);
+          // Track token usage from response
+          trackTokens(backend, model, data.usage || null);
+        }
+        return;
+      }
+      const errText = await upstream.text();
+      lastErr = upstream.status + ': ' + errText.slice(0, 2000);
+      console.log('[router] FAIL ' + label + ': ' + lastErr.slice(0, 500));
+    } catch (e) {
+      const msg = e.message || '';
+      if (msg.startsWith('COOLDOWN:') || msg.startsWith('INACTIVE:')) {
+        console.log('[router] SKIP ' + label + ' (' + msg.split(':')[0] + ')');
+      } else {
+        console.log('[router] ERR ' + label + ': ' + msg);
+      }
+      lastErr = msg;
+    }
+  }
+
+  stats.errors++;
+  res.status(503).json({ error: { message: 'All backends failed. Last: ' + lastErr, type: 'router_exhausted' } });
+});
+
+// ── STATS DATA BUILDER ────────────────────────────────────────────────────────
+function buildStatsData() {
+  checkDayReset();
+  const activeBackends = Object.entries(BACKENDS)
+    .filter(([, b]) => b.active()).map(([name]) => name);
+
+  const models = {};
+  // Merge daily + total usage across all known keys
+  const allKeys = new Set([...Object.keys(dailyUsage), ...Object.keys(totalUsage), ...Object.keys(LIMITS)]);
+  for (const key of allKeys) {
+    const lim  = LIMITS[key] || {};
+    const day  = dailyUsage[key] || { req: 0, prompt: 0, completion: 0, total: 0 };
+    const tot  = totalUsage[key] || { req: 0, prompt: 0, completion: 0, total: 0 };
+    const reqRemain  = lim.reqDay != null ? Math.max(0, lim.reqDay - day.req) : null;
+    const tokRemain  = lim.tokDay != null ? Math.max(0, lim.tokDay - day.total) : null;
+    const reqPct     = lim.reqDay ? Math.min(100, Math.round(day.req / lim.reqDay * 100)) : null;
+    const tokPct     = lim.tokDay ? Math.min(100, Math.round(day.total / lim.tokDay * 100)) : null;
+    models[key] = { day, total: tot, limits: lim, reqRemain, tokRemain, reqPct, tokPct };
+  }
+
+  return {
+    uptime_s: Math.floor((Date.now() - stats.startTime) / 1000),
+    date: dailyDate,
+    active_backends: activeBackends,
+    total_requests: stats.requests,
+    total_errors: stats.errors,
+    by_type: stats.byType,
+    models,
+    cooldowns: Object.fromEntries(
+      Object.entries(cooldowns)
+        .filter(([, v]) => Date.now() < v)
+        .map(([k, v]) => [k, Math.ceil((v - Date.now()) / 1000) + 's'])
+    ),
+  };
+}
+
+// ── JSON STATS ENDPOINT ───────────────────────────────────────────────────────
+app.get('/stats', (_req, res) => res.json(buildStatsData()));
+
+// ── HEALTH ENDPOINT ───────────────────────────────────────────────────────────
+app.get('/health', (_req, res) => {
+  const activeBackends = Object.entries(BACKENDS)
+    .filter(([, b]) => b.active()).map(([name]) => name);
+  res.json({ ok: true, uptime_s: Math.floor((Date.now() - stats.startTime) / 1000), active_backends: activeBackends, stats, cooldowns });
+});
+
+app.get('/v1/models', (_req, res) => {
+  res.json({ object: 'list', data: [{ id: 'gpt-4o', object: 'model', owned_by: 'router' }] });
+});
+
+// ── SEND STATS TO TELEGRAM ────────────────────────────────────────────────────
+async function sendTelegramStats() {
+  const d = buildStatsData();
+  const upH = Math.floor(d.uptime_s / 3600);
+  const upM = Math.floor((d.uptime_s % 3600) / 60);
+
+  let text = `*Статистика токенів* (${d.date})\n`;
+  text += `Uptime: ${upH}г ${upM}хв | Запитів: ${d.total_requests} | Помилок: ${d.total_errors}\n`;
+  text += `Активних: ${d.active_backends.join(', ')}\n\n`;
+
+  // Show only models that were actually used today, sorted by requests desc
+  const used = Object.entries(d.models)
+    .filter(([, v]) => v.day.req > 0)
+    .sort(([, a], [, b]) => b.day.req - a.day.req);
+
+  if (used.length === 0) {
+    text += '_Сьогодні ще не було запитів_\n';
+  } else {
+    for (const [key, v] of used) {
+      const shortKey = key.replace('moonshotai/', '').replace('meta-llama/', '').replace(':free', '');
+      const bar = v.reqPct != null
+        ? '[' + '▓'.repeat(Math.round(v.reqPct / 10)) + '░'.repeat(10 - Math.round(v.reqPct / 10)) + '] ' + v.reqPct + '%'
+        : '';
+      const reqInfo = v.limits.reqDay
+        ? `${v.day.req}/${v.limits.reqDay} req (залишилось: ${v.reqRemain})`
+        : `${v.day.req} req`;
+      const tokInfo = v.day.total > 0
+        ? ` | ${(v.day.total/1000).toFixed(1)}k токенів`
+        : '';
+      text += `*${shortKey}*\n${bar}\n${reqInfo}${tokInfo}\n\n`;
+    }
+  }
+
+  if (Object.keys(d.cooldowns).length > 0) {
+    text += `Cooldowns: ${Object.entries(d.cooldowns).map(([k,v]) => k.split('/').slice(-1)[0]+': '+v).join(', ')}\n`;
+  }
+
+  const payload = {
+    chat_id: TG_CHAT,
+    text,
+    parse_mode: 'Markdown',
+    reply_markup: JSON.stringify({
+      inline_keyboard: [[
+        { text: '📊 Детальна сторінка', url: `http://${SERVER_IP}:9001/` },
+        { text: '🔄 Оновити', url: 'http://68.183.66.2:9001/' },
+      ]]
+    }),
+  };
+
+  await fetch(`https://api.telegram.org/bot${TG_BOT}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+// ── ENDPOINT TO TRIGGER TELEGRAM STATS ───────────────────────────────────────
+app.post('/send-stats', async (_req, res) => {
+  try {
+    await sendTelegramStats();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── HTML STATS PAGE (port 9001, public) ───────────────────────────────────────
+function buildHtml() {
+  const d = buildStatsData();
+  const upH = Math.floor(d.uptime_s / 3600);
+  const upM = Math.floor((d.uptime_s % 3600) / 60);
+
+  const providerColors = {
+    github: '#24292e', gemini: '#4285f4', groq: '#f55036',
+    cerebras: '#7b2fff', openrouter: '#6366f1', mistral: '#ff7000',
+    together: '#1a1a2e', sambanova: '#00a67e',
+  };
+
+  const allModels = Object.entries(d.models).sort(([, a], [, b]) => (b.day.req + b.total.req) - (a.day.req + a.total.req));
+
+  let rows = '';
+  for (const [key, v] of allModels) {
+    const [backend] = key.split('/');
+    const color = providerColors[backend] || '#666';
+    const modelShort = key.split('/').slice(1).join('/').replace(':free','');
+
+    const reqBar = v.reqPct != null
+      ? `<div class="bar-wrap"><div class="bar" style="width:${v.reqPct}%;background:${color}"></div></div>`
+      : '<div class="bar-wrap"><div class="bar bar-unlimited" style="width:30%;background:${color}99"></div></div>';
+
+    const reqText = v.limits.reqDay
+      ? `${v.day.req} / ${v.limits.reqDay} <span class="remain">(${v.reqRemain} залишилось)</span>`
+      : `${v.day.req} <span class="unlimited">без ліміту</span>`;
+
+    const tokText = v.day.total > 0
+      ? `${(v.day.total/1000).toFixed(1)}k сьогодні / ${(v.total.total/1000).toFixed(1)}k всього`
+      : `—`;
+
+    const tokBarHtml = v.tokPct != null
+      ? `<div class="bar-wrap tok-bar"><div class="bar" style="width:${v.tokPct}%;background:${color}99"></div></div>`
+      : '';
+
+    const isActive = d.active_backends.includes(backend) ? '' : ' inactive';
+    const isCool = d.cooldowns[key] ? ` <span class="cool-badge">cooldown ${d.cooldowns[key]}</span>` : '';
+
+    rows += `
+      <tr class="model-row${isActive}">
+        <td><span class="badge" style="background:${color}">${backend}</span><br><span class="model-name">${modelShort}</span>${isCool}</td>
+        <td>${reqText}${reqBar}</td>
+        <td>${tokText}${tokBarHtml}</td>
+        <td class="center">${v.total.req}</td>
+      </tr>`;
+  }
+
+  const typeRows = Object.entries(d.by_type)
+    .map(([t, n]) => `<span class="type-badge">${t}: ${n}</span>`).join(' ');
+
+  return `<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Router — Статистика</title>
+<meta http-equiv="refresh" content="30">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #1e2130 0%, #252840 100%); padding: 24px 32px; border-bottom: 1px solid #2d3148; }
+  .header h1 { font-size: 22px; font-weight: 700; color: #fff; }
+  .header .sub { color: #8892a4; font-size: 13px; margin-top: 4px; }
+  .meta { display: flex; gap: 24px; margin-top: 16px; flex-wrap: wrap; }
+  .meta-item { background: #1a1d2e; border: 1px solid #2d3148; border-radius: 8px; padding: 10px 16px; }
+  .meta-item .val { font-size: 22px; font-weight: 700; color: #7dd3fc; }
+  .meta-item .lbl { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .5px; }
+  .content { padding: 24px 32px; }
+  .section-title { font-size: 13px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; background: #1a1d2e; border: 1px solid #2d3148; border-radius: 10px; overflow: hidden; }
+  thead th { background: #252840; padding: 10px 14px; text-align: left; font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: .5px; font-weight: 600; }
+  tr.model-row td { padding: 12px 14px; border-top: 1px solid #252840; vertical-align: middle; }
+  tr.model-row.inactive { opacity: .4; }
+  tr.model-row:hover { background: #252840; }
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: .5px; }
+  .model-name { font-size: 12px; color: #94a3b8; margin-top: 3px; display: block; }
+  .bar-wrap { height: 6px; background: #2d3148; border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 3px; transition: width .3s; }
+  .tok-bar { margin-top: 4px; opacity: .6; }
+  .remain { color: #4ade80; font-size: 12px; }
+  .unlimited { color: #7dd3fc; font-size: 12px; }
+  .cool-badge { display: inline-block; background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed55; border-radius: 4px; padding: 1px 6px; font-size: 10px; margin-left: 6px; }
+  .center { text-align: center; color: #64748b; }
+  .type-badge { display: inline-block; background: #1e3a5f; color: #7dd3fc; padding: 3px 10px; border-radius: 4px; font-size: 12px; margin: 2px; }
+  .types-row { margin-bottom: 20px; }
+  .refresh-note { text-align: center; color: #334155; font-size: 11px; padding: 16px; }
+  .active-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+  .chip { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; color: #fff; }
+  .cooldowns-row { background: #1a1d2e; border: 1px solid #7c3aed55; border-radius: 8px; padding: 10px 14px; margin-bottom: 20px; color: #a78bfa; font-size: 13px; display: none; }
+  .cooldowns-row.visible { display: block; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Smart Router — Статистика токенів</h1>
+  <div class="sub">Оновлюється кожні 30 секунд | ${new Date().toLocaleString('uk-UA')}</div>
+  <div class="meta">
+    <div class="meta-item"><div class="val">${d.total_requests}</div><div class="lbl">Запитів всього</div></div>
+    <div class="meta-item"><div class="val">${d.total_errors}</div><div class="lbl">Помилок</div></div>
+    <div class="meta-item"><div class="val">${upH}г ${upM}хв</div><div class="lbl">Uptime</div></div>
+    <div class="meta-item"><div class="val">${d.date}</div><div class="lbl">День (скидається опівночі)</div></div>
+  </div>
+</div>
+<div class="content">
+  <div class="section-title">Активні backends</div>
+  <div class="active-chips">
+    ${d.active_backends.map(b => `<div class="chip" style="background:${providerColors[b]||'#666'}">${b}</div>`).join('')}
+  </div>
+
+  ${Object.keys(d.cooldowns).length > 0 ? `
+  <div class="cooldowns-row visible">
+    Cooldowns: ${Object.entries(d.cooldowns).map(([k,v]) => `<b>${k.split('/').pop()}</b>: ${v}`).join(' &nbsp;|&nbsp; ')}
+  </div>` : ''}
+
+  <div class="section-title">Типи запитів сьогодні</div>
+  <div class="types-row">${typeRows || '<span style="color:#334155">—</span>'}</div>
+
+  <div class="section-title">Використання по моделях (сьогодні)</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Модель</th>
+        <th>Запити (сьогодні / ліміт)</th>
+        <th>Токени (сьогодні / всього)</th>
+        <th>Всього запитів</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="refresh-note">Автооновлення кожні 30 сек</div>
+</div>
+</body>
+</html>`;
+}
+
+statsApp.get('/', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(buildHtml());
+});
+
+statsApp.get('/api', (_req, res) => res.json(buildStatsData()));
+
+// ── TELEGRAM CALLBACK QUERY HANDLER ──────────────────────────────────────────
+// Handles "refresh" button presses relayed from Telegram webhook
+app.post('/tg-callback', express.json(), async (req, res) => {
+  const cb = req.body?.callback_query;
+  if (cb?.data === 'refresh_stats') {
+    try {
+      // Answer the callback (removes loading spinner on button)
+      await fetch(`https://api.telegram.org/bot${TG_BOT}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cb.id, text: 'Оновлюю...', show_alert: false }),
+      });
+      // Edit the original message with fresh stats
+      const d = buildStatsData();
+      const upH = Math.floor(d.uptime_s / 3600);
+      const upM = Math.floor((d.uptime_s % 3600) / 60);
+      let text = `*Статистика токенів* (${d.date}) — оновлено ${new Date().toLocaleTimeString('uk-UA')}\n`;
+      text += `Uptime: ${upH}г ${upM}хв | Запитів: ${d.total_requests} | Помилок: ${d.total_errors}\n\n`;
+      const used = Object.entries(d.models)
+        .filter(([, v]) => v.day.req > 0)
+        .sort(([, a], [, b]) => b.day.req - a.day.req);
+      if (used.length === 0) { text += '_Сьогодні ще не було запитів_'; }
+      else {
+        for (const [key, v] of used) {
+          const shortKey = key.replace('moonshotai/', '').replace('meta-llama/', '').replace(':free', '');
+          const bar = v.reqPct != null
+            ? '[' + '▓'.repeat(Math.round(v.reqPct / 10)) + '░'.repeat(10 - Math.round(v.reqPct / 10)) + '] ' + v.reqPct + '%'
+            : '';
+          const reqInfo = v.limits.reqDay
+            ? `${v.day.req}/${v.limits.reqDay} req (залишилось: ${v.reqRemain})`
+            : `${v.day.req} req`;
+          const tokInfo = v.day.total > 0 ? ` | ${(v.day.total/1000).toFixed(1)}k токенів` : '';
+          text += `*${shortKey}*\n${bar}\n${reqInfo}${tokInfo}\n\n`;
+        }
+      }
+      await fetch(`https://api.telegram.org/bot${TG_BOT}/editMessageText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: cb.message.chat.id,
+          message_id: cb.message.message_id,
+          text,
+          parse_mode: 'Markdown',
+          reply_markup: JSON.stringify({
+            inline_keyboard: [[
+              { text: '📊 Детальна сторінка', url: `http://${SERVER_IP}:9001/` },
+              { text: '🔄 Оновити', url: 'http://68.183.66.2:9001/' },
+            ]]
+          }),
+        }),
+      });
+    } catch (e) { console.error('[tg-callback] error:', e.message); }
+  }
+  res.json({ ok: true });
+});
+
+// ── START ─────────────────────────────────────────────────────────────────────
+app.listen(9000, '127.0.0.1', () => {
+  const active = Object.entries(BACKENDS).filter(([,b]) => b.active()).map(([n]) => n);
+  console.log('[smart-router] :9000 | active: ' + active.join(', '));
+});
+
+statsApp.listen(9001, '0.0.0.0', () => {
+  console.log('[stats-page]   :9001 public | http://' + SERVER_IP + ':9001/');
+});

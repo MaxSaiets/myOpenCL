@@ -1,0 +1,115 @@
+{
+  "providers": {
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "auto",
+          "name": "OpenRouter Auto",
+          "reasoning": false,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 200000,
+          "maxTokens": 8192
+        },
+        {
+          "id": "openrouter/hunter-alpha",
+          "name": "Hunter Alpha",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1048576,
+          "maxTokens": 65536
+        },
+        {
+          "id": "openrouter/healer-alpha",
+          "name": "Healer Alpha",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 262144,
+          "maxTokens": 65536
+        }
+      ],
+      "apiKey": "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"
+    },
+    "github-copilot": {
+      "baseUrl": "https://api.individual.githubcopilot.com",
+      "models": []
+    },
+    "google": {
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "apiKey": "AIzaSyC73-GrjZ2KEqgnaR2D-k9eS9NrQg_eZKQ",
+      "api": "google-generative-ai",
+      "models": [
+        {
+          "id": "gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash",
+          "reasoning": false,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1048576,
+          "maxTokens": 65536,
+          "api": "google-generative-ai"
+        }
+      ]
+    },
+    "router": {
+      "baseUrl": "http://127.0.0.1:9000/v1",
+      "apiKey": "local",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "gpt-4o",
+          "name": "Gemini 2.5 Flash via Smart Router",
+          "reasoning": false,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 200000,
+          "maxTokens": 16384,
+          "api": "openai-completions"
+        }
+      ]
+    }
+  }
+}
