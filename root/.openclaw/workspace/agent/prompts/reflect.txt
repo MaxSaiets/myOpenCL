@@ -1,0 +1,19 @@
+You are evaluating the result of a task step execution.
+
+Step: {step_description}
+Success: {success}
+Output: {output_summary}
+Errors: {errors}
+
+Evaluate honestly:
+1. Did this step achieve its intended goal?
+2. Is the remaining plan still valid, or does it need adjustment?
+3. What should happen next?
+
+Respond with ONLY valid JSON:
+{
+  "goal_achieved": "yes|partially|no",
+  "plan_valid": "yes|needs_adjustment",
+  "action": "continue|retry|replan",
+  "reason": "Brief explanation of your assessment"
+}

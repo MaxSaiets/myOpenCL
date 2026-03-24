@@ -1,0 +1,24 @@
+You are a replanning engine. A task partially completed but encountered a failure.
+Create a new plan for the REMAINING work only.
+
+Available tools: read, write, exec, web_search, memory_search
+
+Original task: {original_task}
+
+Completed steps:
+{completed_steps}
+
+Failed step: {failed_step}
+Error: {error_context}
+
+Create a new plan that:
+1. Works around the failure (don't repeat the exact same approach)
+2. Achieves the original goal through an alternative path if possible
+3. Only includes REMAINING steps (don't redo completed work)
+
+Respond with ONLY valid JSON:
+{
+  "steps": [...],
+  "priority": "high",
+  "acceptance_criteria": [...]
+}

@@ -1,0 +1,228 @@
+[
+  {
+    "id": "test_001",
+    "description": "Create a simple text file",
+    "input": "Create a file /tmp/openclaw_test_hello.txt containing 'Hello World'",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_hello.txt",
+      "file_contains": "Hello World"
+    },
+    "category": "file_operations",
+    "difficulty": "simple"
+  },
+  {
+    "id": "test_002",
+    "description": "Read an existing file",
+    "input": "Read the contents of /etc/hostname and tell me what it says",
+    "expected": {
+      "has_output": true,
+      "output_not_empty": true
+    },
+    "category": "file_operations",
+    "difficulty": "simple"
+  },
+  {
+    "id": "test_003",
+    "description": "Execute a shell command",
+    "input": "Run the command 'echo test123' and report the output",
+    "expected": {
+      "output_contains": "test123",
+      "exit_code": 0
+    },
+    "category": "command_execution",
+    "difficulty": "simple"
+  },
+  {
+    "id": "test_004",
+    "description": "Multi-step file operation",
+    "input": "Read /etc/hostname, then create /tmp/openclaw_test_hostname_copy.txt with those contents",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_hostname_copy.txt",
+      "files_match": ["/etc/hostname", "/tmp/openclaw_test_hostname_copy.txt"]
+    },
+    "category": "multi_step",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_005",
+    "description": "List directory contents",
+    "input": "List all files in /tmp/ and create a report at /tmp/openclaw_test_dir_report.txt",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_dir_report.txt",
+      "file_not_empty": true
+    },
+    "category": "multi_step",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_006",
+    "description": "Handle non-existent file gracefully",
+    "input": "Read the file /tmp/this_file_definitely_does_not_exist_12345.txt",
+    "expected": {
+      "handles_error": true,
+      "no_crash": true
+    },
+    "category": "error_recovery",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_007",
+    "description": "Handle failing command gracefully",
+    "input": "Run the command 'false' (which always fails with exit code 1)",
+    "expected": {
+      "handles_error": true,
+      "reports_failure": true
+    },
+    "category": "error_recovery",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_008",
+    "description": "Memory store and retrieve",
+    "input": "Store the fact that my favorite color is blue, then retrieve it",
+    "expected": {
+      "memory_stored": true,
+      "memory_retrieved": true,
+      "output_contains": "blue"
+    },
+    "category": "memory_operations",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_009",
+    "description": "Complex multi-step with verification",
+    "input": "Create a Python script at /tmp/openclaw_test_hello.py that prints 'Hello from Claw', then run it and verify the output",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_hello.py",
+      "output_contains": "Hello from Claw"
+    },
+    "category": "multi_step",
+    "difficulty": "complex"
+  },
+  {
+    "id": "test_010",
+    "description": "Create plan with dependencies",
+    "input": "First check if Python is installed (run 'python3 --version'), then create a script that uses json module, then run it",
+    "expected": {
+      "plan_has_dependencies": true,
+      "min_steps": 3,
+      "all_steps_complete": true
+    },
+    "category": "planning_quality",
+    "difficulty": "complex"
+  },
+  {
+    "id": "test_011",
+    "description": "Web search capability",
+    "input": "Search the web for 'Python datetime format codes'",
+    "expected": {
+      "has_results": true,
+      "results_relevant": true
+    },
+    "category": "web_search",
+    "difficulty": "simple"
+  },
+  {
+    "id": "test_012",
+    "description": "Append to existing file",
+    "input": "Create /tmp/openclaw_test_append.txt with 'line1', then append 'line2' to it",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_append.txt",
+      "file_contains": "line1",
+      "file_contains_2": "line2"
+    },
+    "category": "multi_step",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_013",
+    "description": "System information gathering",
+    "input": "Get the system uptime and disk usage, save to /tmp/openclaw_test_sysinfo.txt",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_sysinfo.txt",
+      "file_not_empty": true
+    },
+    "category": "multi_step",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_014",
+    "description": "JSON file manipulation",
+    "input": "Create a JSON file at /tmp/openclaw_test_data.json with {\"name\": \"Claw\", \"version\": \"2.0\"}",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_data.json",
+      "valid_json": true,
+      "json_has_key": "name"
+    },
+    "category": "file_operations",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_015",
+    "description": "Error recovery with alternative approach",
+    "input": "Try to read /root/nonexistent_config.json. If it doesn't exist, create it with default values {\"debug\": false}",
+    "expected": {
+      "file_exists": "/root/nonexistent_config.json",
+      "handles_missing": true
+    },
+    "category": "error_recovery",
+    "difficulty": "complex"
+  },
+  {
+    "id": "test_016",
+    "description": "Process pipeline",
+    "input": "Count the number of files in /etc/ and save the count to /tmp/openclaw_test_count.txt",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_count.txt",
+      "file_contains_number": true
+    },
+    "category": "command_execution",
+    "difficulty": "medium"
+  },
+  {
+    "id": "test_017",
+    "description": "Conditional logic in planning",
+    "input": "Check if /tmp/openclaw_test_flag.txt exists. If yes, write 'exists' to /tmp/openclaw_test_result.txt. If no, write 'not found'",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_result.txt",
+      "file_not_empty": true
+    },
+    "category": "planning_quality",
+    "difficulty": "complex"
+  },
+  {
+    "id": "test_018",
+    "description": "Memory search relevance",
+    "input": "Store three facts: 'Python is a programming language', 'JavaScript runs in browsers', 'Rust is memory-safe'. Then search for 'browser scripting language'",
+    "expected": {
+      "search_returns_results": true,
+      "top_result_relevant": true
+    },
+    "category": "memory_operations",
+    "difficulty": "complex"
+  },
+  {
+    "id": "test_019",
+    "description": "Timeout handling",
+    "input": "Run a command that sleeps for 2 seconds: 'sleep 2 && echo done'",
+    "expected": {
+      "completes": true,
+      "output_contains": "done"
+    },
+    "category": "command_execution",
+    "difficulty": "simple"
+  },
+  {
+    "id": "test_020",
+    "description": "End-to-end workflow",
+    "input": "Search memory for any previous tasks, create a summary report at /tmp/openclaw_test_summary.txt with the current date and task count",
+    "expected": {
+      "file_exists": "/tmp/openclaw_test_summary.txt",
+      "file_not_empty": true,
+      "uses_memory": true,
+      "uses_file_write": true
+    },
+    "category": "multi_step",
+    "difficulty": "complex"
+  }
+]

@@ -1,0 +1,39 @@
+# Agent Configuration Defaults
+
+# Core Settings
+core:
+  max_concurrent_tasks: 5
+  task_timeout_seconds: 300
+  retry_attempts: 3
+  memory_retention_days: 30
+
+# Memory Settings
+memory:
+  storage_path: "memory/MEMORY.md"
+  search_limit: 10
+  context_window_size: 5
+
+# Communication Settings
+communication:
+  default_language: "uk"
+  response_format: "detailed"
+  include_reasoning: false
+
+# Logging Settings
+logging:
+  level: "INFO"
+  file_path: "logs/execution.log"
+  max_file_size_mb: 10
+  backup_count: 5
+
+# Tool Settings
+tools:
+  web_search:
+    enabled: true
+    rate_limit_per_minute: 60
+  file_operations:
+    enabled: true
+    allowed_directories: ["workspace", "projects", "memory"]
+  subprocess:
+    enabled: true
+    timeout_seconds: 60

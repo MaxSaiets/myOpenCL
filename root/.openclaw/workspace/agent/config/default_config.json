@@ -1,0 +1,41 @@
+{
+  "memory": {
+    "storage_path": "MEMORY.md",
+    "backup_interval_minutes": 60,
+    "max_backup_count": 24
+  },
+  "personality": {
+    "tone": "professional",
+    "formality": "medium",
+    "verbosity": "concise",
+    "style": "direct",
+    "response_structure": "clear_sections"
+  },
+  "planning": {
+    "default_priority": "medium",
+    "max_steps_per_task": 50,
+    "dependency_check_enabled": true,
+    "circular_dependency_detection": true
+  },
+  "execution": {
+    "max_retries_per_step": 3,
+    "timeout_seconds": 300,
+    "concurrent_execution": false,
+    "tool_approval_required": false
+  },
+  "communication": {
+    "response_language": "en",
+    "timezone": "UTC",
+    "notification_preferences": {
+      "task_updates": true,
+      "errors": true,
+      "completion": true
+    }
+  },
+  "system": {
+    "version": "0.1.0",
+    "environment": "development",
+    "debug_mode": true,
+    "log_level": "info"
+  }
+}

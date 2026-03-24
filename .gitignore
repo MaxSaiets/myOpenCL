@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Secrets - DO NOT COMMIT
+download_backup.py
+check_server.py
+check_server2.py
+
+# SQLite databases (generated at runtime)
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Sessions (contain API keys in JSONL)
+root/.openclaw/agents/main/sessions/
+
+# Auth profiles with API keys
+root/.openclaw/agents/main/agent/auth-profiles.json
+root/.openclaw/agents/main/agent/models.json
+
+# Backup scripts with passwords
+*.py.bak
+fix_secrets_and_push.py
+push_backup.py
+remote_git_backup.py
+
+# Device keys
+root/.openclaw/identity/
+root/.openclaw/devices/
+
+# Large workspace files
+root/.openclaw/workspace/venv/
+root/.openclaw/workspace/agent_backup/
+root/.openclaw/workspace/agent_backups/
