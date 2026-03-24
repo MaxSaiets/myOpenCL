@@ -156,25 +156,29 @@ class MemoryStore:
         ).fetchall()
         return [self._row_to_dict(r) for r in rows]
 
-    def search_semantic(self, query: str, limit: int = 10, min_similarity: float = 0.3) -> list[dict]:
+    def search_semantic(self, query, limit: int = 10, min_similarity: float = 0.3) -> list[dict]:
         """
         Semantic search using embedding similarity.
 
         Args:
-            query: Search query text.
+            query: Search query text (str) or pre-computed embedding vector (list[float]).
             limit: Max results to return.
             min_similarity: Minimum cosine similarity threshold.
 
         Returns:
             List of matching memories sorted by relevance.
         """
-        # Compute query embedding
-        if not self.llm_client:
-            return self.search_keyword(query, limit)
+        # Accept both string queries and pre-computed vectors
+        if isinstance(query, list):
+            query_embedding = query
+        else:
+            # Compute query embedding from string
+            if not self.llm_client:
+                return self.search_keyword(str(query), limit)
 
-        query_embedding = self.llm_client.embed(query)
-        if not query_embedding:
-            return self.search_keyword(query, limit)
+            query_embedding = self.llm_client.embed(str(query))
+            if not query_embedding:
+                return self.search_keyword(str(query), limit)
 
         # Load all embeddings and compare
         rows = self._conn.execute(

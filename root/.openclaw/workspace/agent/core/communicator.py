@@ -136,8 +136,8 @@ class Communicator:
             
             # Add traceback if available and appropriate
             if content.get('traceback') and self.personality.get('verbosity') == 'detailed':
-                details.append(f"**Traceback:**\n```
-{content['traceback']}\n```")
+                tb = content['traceback']
+                details.append(f"**Traceback:**\n```\n{tb}\n```")
             
             return f"{error_msg}\n\n" + "\n".join(details)
         else:
