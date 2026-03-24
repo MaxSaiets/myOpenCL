@@ -156,7 +156,7 @@ Evaluate and respond with ONLY valid JSON:
         }
 
     def _perform_execution(self, step: dict, context: dict) -> dict:
-        """Execute step using required tools."""
+        """Execute step using required tools with LLM-assisted argument extraction."""
         required_tools = step.get('required_tools', ['default'])
         tool_results = []
 
@@ -170,12 +170,24 @@ Evaluate and respond with ONLY valid JSON:
                 continue
 
             try:
-                args = self._extract_tool_arguments(tool_name, step, context)
+                # Try LLM-assisted argument extraction first, fall back to heuristic
+                args = self._smart_extract_args(tool_name, step, context)
                 result = tool(**args) if args else tool()
+
+                # Normalize result to always be a dict
+                if isinstance(result, str):
+                    is_error = any(x in result.lower() for x in ['error', 'failed', 'denied', 'not found'])
+                    result = {
+                        'success': not is_error,
+                        'output': result,
+                    }
+                elif not isinstance(result, dict):
+                    result = {'success': True, 'output': str(result)}
+
                 tool_results.append({
                     'success': result.get('success', True),
                     'tool': tool_name,
-                    'output': result,
+                    'output': result.get('output', result),
                 })
                 # Record in active execution
                 if step['id'] in self.active_executions:
@@ -201,6 +213,56 @@ Evaluate and respond with ONLY valid JSON:
                 'failed_calls': sum(1 for r in tool_results if not r.get('success')),
             },
         }
+
+    def _smart_extract_args(self, tool_name: str, step: dict, context: dict) -> dict:
+        """Use LLM to extract precise tool arguments, with heuristic fallback."""
+        # First try heuristic extraction (fast, no API call)
+        args = self._extract_tool_arguments(tool_name, step, context)
+
+        # If we got good args from heuristics, use them
+        if args and all(v for v in args.values()):
+            return args
+
+        # Use LLM for complex cases
+        if self.model_router:
+            try:
+                from agent.core.model_router import TaskType, Complexity
+                desc = step.get('description', '')
+                prompt = f"""Extract the exact arguments for the '{tool_name}' tool from this step description.
+
+Step: {desc}
+
+Tool '{tool_name}' accepts these arguments:
+- read: path (file path to read)
+- write: path (file path), content (text to write)
+- exec: command (shell command to run)
+- web_search: query (search query)
+- memory_search: query (search query)
+
+Respond with ONLY valid JSON containing the argument key-value pairs.
+Example for write: {{"path": "/tmp/test.txt", "content": "hello world"}}
+Example for exec: {{"command": "ls -la /tmp"}}"""
+
+                resp = self.model_router.complete_routed(
+                    messages=[{'role': 'user', 'content': prompt}],
+                    task_type=TaskType.CLASSIFY,
+                    complexity=Complexity.SIMPLE,
+                    temperature=0.0,
+                    max_tokens=200,
+                    response_format='json',
+                )
+
+                if resp.success and resp.content:
+                    try:
+                        llm_args = json.loads(resp.content)
+                        if isinstance(llm_args, dict) and llm_args:
+                            return llm_args
+                    except json.JSONDecodeError:
+                        pass
+            except Exception:
+                pass
+
+        return args
 
     def _extract_tool_arguments(self, tool_name: str, step: dict, context: dict) -> dict:
         """Extract arguments for a tool call from step description."""

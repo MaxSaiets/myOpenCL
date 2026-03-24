@@ -2,6 +2,13 @@
 Unified LLM client for OpenClaw agent.
 Supports: local smart-router, OpenRouter API, Google Gemini API.
 Uses urllib.request (stdlib) — no external dependencies.
+
+Features:
+  - Smart-router as primary (routes to Gemini/Groq/Cerebras/GitHub/OpenRouter)
+  - Automatic retry with exponential backoff on 429/503
+  - Fallback chain: smart-router → Gemini direct → OpenRouter direct
+  - Hash-based local embeddings (no API needed)
+  - Request deduplication for identical prompts within TTL
 """
 
 import json
@@ -9,12 +16,19 @@ import os
 import time
 import logging
 import hashlib
+import math
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from dataclasses import dataclass, field
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# --- Retry configuration ---
+MAX_RETRIES = 3              # Max retries per provider on 429/503
+RETRY_BASE_DELAY = 2.0       # Base delay in seconds (doubles each retry)
+RETRY_MAX_DELAY = 30.0       # Max delay between retries
+DEDUP_TTL = 5.0              # Seconds to cache identical requests
 
 
 @dataclass
@@ -118,7 +132,7 @@ MODELS = {
         cost_per_1k_input=0.003,
         cost_per_1k_output=0.012,
     ),
-    # Embedding via smart-router (uses TF-IDF fallback if unavailable)
+    # Embedding — local hash-based (no API needed)
     'embed': ModelConfig(
         provider='embed-local',
         model_id='local-hash',
@@ -159,14 +173,17 @@ def _auto_load_keys():
 
 
 class LLMClient:
-    """Unified LLM client with multi-provider support and fallback."""
+    """Unified LLM client with multi-provider support, retry, and fallback."""
 
     def __init__(self, models: dict = None):
         _auto_load_keys()
         self.models = models or MODELS
         self._failure_counts: dict[str, int] = {}
+        self._cooldowns: dict[str, float] = {}  # key -> timestamp when cooldown ends
         self._total_cost: float = 0.0
         self._total_calls: int = 0
+        self._total_retries: int = 0
+        self._dedup_cache: dict[str, tuple] = {}  # hash -> (response, timestamp)
 
     # --- Public API ---
 
@@ -180,7 +197,7 @@ class LLMClient:
         system: str = None,
     ) -> LLMResponse:
         """
-        Send a chat completion request with automatic fallback.
+        Send a chat completion request with automatic retry and fallback.
 
         Args:
             messages: String or list of {role, content} dicts.
@@ -200,6 +217,12 @@ class LLMClient:
         if system:
             messages = [{'role': 'system', 'content': system}] + messages
 
+        # Check dedup cache for identical recent requests
+        cache_key = self._make_cache_key(messages, model_key, temperature)
+        cached = self._check_cache(cache_key)
+        if cached:
+            return cached
+
         # Build ordered attempt list: requested model first, then fallbacks
         attempt_order = [model_key] + [k for k in FALLBACK_CHAIN if k != model_key]
 
@@ -208,23 +231,81 @@ class LLMClient:
             if key not in self.models:
                 continue
             cfg = self.models[key]
-            # Skip models with high recent failure rate
-            if self._failure_counts.get(key, 0) > 5:
-                logger.warning(f"Skipping {key}: too many recent failures")
+
+            # Skip models in cooldown
+            if self._in_cooldown(key):
+                logger.debug(f"Skipping {key}: in cooldown")
                 continue
 
-            try:
-                resp = self._call_provider(cfg, messages, temperature, min(max_tokens, cfg.max_output), response_format)
-                # Reset failure count on success
-                self._failure_counts[key] = 0
-                self._total_calls += 1
-                self._total_cost += resp.cost_usd
-                return resp
-            except Exception as e:
-                self._failure_counts[key] = self._failure_counts.get(key, 0) + 1
-                last_error = str(e)
-                logger.warning(f"LLM call failed for {key}: {e}")
+            # Skip models with too many consecutive failures
+            if self._failure_counts.get(key, 0) > 10:
+                logger.warning(f"Skipping {key}: too many recent failures ({self._failure_counts[key]})")
                 continue
+
+            # Try with retries for transient errors (429, 503)
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    resp = self._call_provider(
+                        cfg, messages, temperature,
+                        min(max_tokens, cfg.max_output), response_format
+                    )
+                    # Success — reset failure count, cache result
+                    self._failure_counts[key] = 0
+                    self._total_calls += 1
+                    self._total_cost += resp.cost_usd
+                    self._cache_response(cache_key, resp)
+                    return resp
+
+                except HTTPError as e:
+                    error_code = e.code
+                    error_body = ''
+                    try:
+                        error_body = e.read().decode('utf-8', errors='replace')[:500]
+                    except Exception:
+                        pass
+
+                    last_error = f"HTTP {error_code}: {error_body[:200]}"
+
+                    if error_code in (429, 503) and attempt < MAX_RETRIES:
+                        # Retry with exponential backoff
+                        delay = min(RETRY_BASE_DELAY * (2 ** attempt), RETRY_MAX_DELAY)
+                        # Check Retry-After header
+                        retry_after = e.headers.get('Retry-After') if hasattr(e, 'headers') else None
+                        if retry_after:
+                            try:
+                                delay = max(delay, float(retry_after))
+                            except ValueError:
+                                pass
+                        logger.info(f"Retry {attempt+1}/{MAX_RETRIES} for {key} after {delay:.1f}s (HTTP {error_code})")
+                        self._total_retries += 1
+                        time.sleep(delay)
+                        continue
+                    else:
+                        # Non-retryable or exhausted retries
+                        self._failure_counts[key] = self._failure_counts.get(key, 0) + 1
+                        if error_code in (429, 503):
+                            # Set cooldown for this model
+                            self._set_cooldown(key, 60)  # 60s cooldown
+                        logger.warning(f"LLM call failed for {key}: HTTP {error_code}")
+                        break
+
+                except (URLError, TimeoutError, ConnectionError) as e:
+                    last_error = str(e)
+                    self._failure_counts[key] = self._failure_counts.get(key, 0) + 1
+                    if attempt < MAX_RETRIES:
+                        delay = RETRY_BASE_DELAY * (2 ** attempt)
+                        logger.info(f"Retry {attempt+1}/{MAX_RETRIES} for {key} after {delay:.1f}s (connection error)")
+                        self._total_retries += 1
+                        time.sleep(delay)
+                        continue
+                    logger.warning(f"LLM call failed for {key}: {e}")
+                    break
+
+                except Exception as e:
+                    self._failure_counts[key] = self._failure_counts.get(key, 0) + 1
+                    last_error = str(e)
+                    logger.warning(f"LLM call failed for {key}: {e}")
+                    break
 
         return LLMResponse(
             content='',
@@ -236,12 +317,8 @@ class LLMClient:
 
     def embed(self, text: str) -> list[float]:
         """
-        Generate embedding vector for text.
-
-        Uses a deterministic hash-based embedding as primary method.
-        This is lightweight and works offline — no API needed.
-        For semantic similarity it uses character n-gram hashing
-        which provides reasonable similarity for keyword matching.
+        Generate embedding vector for text using local hash-based method.
+        Works offline, no API needed. Uses character n-gram hashing.
 
         Args:
             text: Text to embed.
@@ -255,38 +332,111 @@ class LLMClient:
             logger.warning(f"Embedding failed: {e}")
             return []
 
+    def get_stats(self) -> dict:
+        """Return usage statistics."""
+        return {
+            'total_calls': self._total_calls,
+            'total_retries': self._total_retries,
+            'total_cost_usd': round(self._total_cost, 6),
+            'failure_counts': dict(self._failure_counts),
+            'active_cooldowns': {
+                k: round(v - time.time(), 1)
+                for k, v in self._cooldowns.items()
+                if v > time.time()
+            },
+            'cache_size': len(self._dedup_cache),
+        }
+
+    def reset_failures(self):
+        """Reset all failure counts and cooldowns (call after fixing issues)."""
+        self._failure_counts.clear()
+        self._cooldowns.clear()
+        logger.info("Reset all failure counts and cooldowns")
+
+    # --- Cooldown management ---
+
+    def _in_cooldown(self, key: str) -> bool:
+        """Check if a model is in cooldown."""
+        return self._cooldowns.get(key, 0) > time.time()
+
+    def _set_cooldown(self, key: str, seconds: float):
+        """Set a cooldown for a model."""
+        self._cooldowns[key] = time.time() + seconds
+        logger.info(f"Set {seconds}s cooldown for {key}")
+
+    # --- Request deduplication ---
+
+    def _make_cache_key(self, messages: list, model_key: str, temperature: float) -> str:
+        """Create a hash key for deduplication."""
+        raw = json.dumps({'m': messages, 'k': model_key, 't': temperature}, sort_keys=True)
+        return hashlib.md5(raw.encode()).hexdigest()
+
+    def _check_cache(self, cache_key: str) -> Optional[LLMResponse]:
+        """Check if we have a cached response within TTL."""
+        if cache_key in self._dedup_cache:
+            resp, ts = self._dedup_cache[cache_key]
+            if time.time() - ts < DEDUP_TTL:
+                logger.debug("Returning cached response")
+                return resp
+            else:
+                del self._dedup_cache[cache_key]
+        return None
+
+    def _cache_response(self, cache_key: str, resp: LLMResponse):
+        """Cache a response for deduplication."""
+        self._dedup_cache[cache_key] = (resp, time.time())
+        # Prune old entries
+        if len(self._dedup_cache) > 100:
+            now = time.time()
+            self._dedup_cache = {
+                k: (r, t) for k, (r, t) in self._dedup_cache.items()
+                if now - t < DEDUP_TTL
+            }
+
+    # --- Embedding implementation ---
+
     def _hash_embed(self, text: str, dims: int = 256) -> list[float]:
         """
         Create a deterministic embedding using character n-gram hashing.
         Not as good as neural embeddings but works offline and is fast.
+        Uses multi-scale n-grams and word-level features for reasonable
+        similarity between related texts.
         """
-        import math
         vector = [0.0] * dims
         text_lower = text.lower().strip()
 
         if not text_lower:
             return vector
 
-        # Character n-grams (2, 3, 4)
+        # Character n-grams (2, 3, 4) — captures local patterns
         for n in [2, 3, 4]:
+            weight = 1.0 / n  # Shorter n-grams get slightly more weight
             for i in range(len(text_lower) - n + 1):
                 ngram = text_lower[i:i+n]
                 h = int(hashlib.md5(ngram.encode()).hexdigest(), 16)
                 idx = h % dims
-                vector[idx] += 1.0
+                vector[idx] += weight
 
-        # Word-level hashing
+        # Word-level hashing — captures semantics
         words = text_lower.split()
         for word in words:
+            # Remove common punctuation
+            word = word.strip('.,!?;:()[]{}"\'-')
+            if not word:
+                continue
             h = int(hashlib.sha256(word.encode()).hexdigest(), 16)
             idx = h % dims
             vector[idx] += 2.0  # Words get higher weight
-            # Also hash word pairs
+
+        # Word pair hashing — captures word relationships
         for i in range(len(words) - 1):
-            pair = words[i] + ' ' + words[i+1]
-            h = int(hashlib.md5(pair.encode()).hexdigest(), 16)
-            idx = h % dims
-            vector[idx] += 1.5
+            w1 = words[i].strip('.,!?;:()[]{}"\'-')
+            w2 = words[i+1].strip('.,!?;:()[]{}"\'-')
+            if w1 and w2:
+                pair = w1 + ' ' + w2
+                h = int(hashlib.md5(pair.encode()).hexdigest(), 16)
+                idx = h % dims
+                vector[idx] += 1.5
 
         # L2 normalize
         norm = math.sqrt(sum(v*v for v in vector))
@@ -294,14 +444,6 @@ class LLMClient:
             vector = [v / norm for v in vector]
 
         return vector
-
-    def get_stats(self) -> dict:
-        """Return usage statistics."""
-        return {
-            'total_calls': self._total_calls,
-            'total_cost_usd': round(self._total_cost, 6),
-            'failure_counts': dict(self._failure_counts),
-        }
 
     # --- Provider implementations ---
 
@@ -356,7 +498,15 @@ class LLMClient:
 
         content = choice.get('message', {}).get('content', '')
         if not content:
-            raise ValueError("Empty response from model")
+            # Check for tool calls (which are valid responses without content)
+            tool_calls = choice.get('message', {}).get('tool_calls', [])
+            if tool_calls:
+                content = json.dumps([{
+                    'name': tc.get('function', {}).get('name', ''),
+                    'arguments': tc.get('function', {}).get('arguments', '{}'),
+                } for tc in tool_calls])
+            else:
+                raise ValueError("Empty response from model")
 
         return LLMResponse(
             content=content,
